@@ -1,0 +1,115 @@
+// test of genetic entropy with epistasis
+// Scaling factor 3 applied to Ne, mutation rate, recombination rate, and genome size
+// Selection coefficients taken directly from Racimo & Schraiber (2014) genome-wide
+// mean |s| of 6.9e-6, scaled by factor of 3:
+//   s_del = 6.9e-6 * 3 = 2.07e-5
+//   s_ben = 6.9e-6 * 3 = 2.07e-5
+// H_DEL = 0.4 — mildly recessive, consistent with weak-effect DFE literature
+// H_BEN = 0.6 — modestly dominant, within empirical range for beneficial mutations
+// EPS_DEL = 0.03 — synergistic epistasis among deleterious, empirically grounded
+// EPS_BEN = 0.0 — no diminishing returns among beneficial, best case for evolution
+// Beneficial fraction 0.001 — more empirically defensible than 0.01
+// setIntersection required for both blocks since neither correction term is zero:
+//   (1 - 2*H_DEL) = 0.2 != 0
+//   (1 - 2*H_BEN) = -0.2 != 0
+// Discrete non-overlapping generations — parents die after reproducing
+// 4 offspring per individual before density dependent culling
+initialize() {
+	initializeSLiMModelType("nonWF");
+	defineConstant("K", 4115);           // Ne 10,000 / 3  --expected to reach pop ceiling of ~3333
+	defineConstant("EPS_DEL", 0.5);     // synergistic epistasis among deleterious
+	defineConstant("EPS_BEN", 0.0);      // no diminishing returns — best case for evolution
+	defineConstant("H_DEL", 0.4);        // mildly recessive — consistent with weak-effect DFE
+	defineConstant("H_BEN", 0.6);        // modestly dominant — within empirical range
+	
+	initializeMutationType("m2", H_DEL, "g", -2.07e-5, 0.38); // Racimo & Schraiber × 3
+	m2.convertToSubstitution = F;
+	initializeMutationType("m3", H_BEN, "e", 2.07e-5);        // Racimo & Schraiber × 3
+	m3.convertToSubstitution = F;
+	
+	initializeGenomicElementType("g1", c(m2, m3), c(0.999, 0.001)); // Sanjuan et al
+	initializeGenomicElement(g1, 0, 999999999);   // 3 billion / 3 = 1 billion bp
+	initializeMutationRate(3.6e-8);               // 1.2e-8 × 3
+	initializeRecombinationRate(3.0e-8);          // 1.0e-8 × 3
+}
+
+// Disable default per-mutation fitness — all selection handled in fitnessEffect()
+mutationEffect(m2) { return 1.0; }
+mutationEffect(m3) { return 1.0; }
+
+// -------------------------------------------------------------------------
+// Epistatic fitness with dominance.
+//
+// Identity used: S_eff = H*(S_g1 + S_g2) + (1 - 2*H)*S_hom
+//   where H is the dominance coefficient governing heterozygote expression
+//   and EPS is the epistasis coefficient governing interlocus interactions
+//
+// Deleterious (dominance H_DEL = 0.4, synergistic epistasis EPS_DEL = 0.03):
+//   Dominance: heterozygotes express 40% of homozygous effect — mildly recessive
+//   Epistasis: collective fitness cost grows faster than multiplicative
+//   setIntersection required since (1 - 2*H_DEL) = 0.2 != 0
+//   w_del = exp(-S_del * (1 + EPS_DEL * S_del))
+//
+// Beneficial (dominance H_BEN = 0.6, no epistasis EPS_BEN = 0.0):
+//   Dominance: heterozygotes express 60% of homozygous benefit — modestly dominant
+//   Epistasis: EPS_BEN = 0 gives standard multiplicative w_ben = exp(S_ben)
+//   setIntersection required since (1 - 2*H_BEN) = -0.2 != 0
+// -------------------------------------------------------------------------
+fitnessEffect() {
+	// --- Deleterious: dominance H_DEL = 0.4, synergistic epistasis EPS_DEL = 0.03 ---
+	g1_del = individual.haploidGenome1.mutationsOfType(m2);
+	g2_del = individual.haploidGenome2.mutationsOfType(m2);
+	
+	S_g1_del = size(g1_del) ? sum(abs(g1_del.selectionCoeff)) else 0.0;
+	S_g2_del = size(g2_del) ? sum(abs(g2_del.selectionCoeff)) else 0.0;
+	S_hom_del = 0.0;
+	if (size(g1_del) & size(g2_del))
+		S_hom_del = sum(abs(setIntersection(g1_del, g2_del).selectionCoeff));
+	
+	S_del = H_DEL * (S_g1_del + S_g2_del) + (1 - 2*H_DEL) * S_hom_del;
+	w_del = exp(-S_del * (1.0 + EPS_DEL * S_del));
+	
+	// --- Beneficial: dominance H_BEN = 0.6, multiplicative epistasis EPS_BEN = 0.0 ---
+	// EPS_BEN = 0 reduces formula to standard multiplicative exp(S_ben)
+	// setIntersection required since (1 - 2*H_BEN) = -0.2 != 0
+	g1_ben = individual.haploidGenome1.mutationsOfType(m3);
+	g2_ben = individual.haploidGenome2.mutationsOfType(m3);
+	
+	S_g1_ben = size(g1_ben) ? sum(g1_ben.selectionCoeff) else 0.0;
+	S_g2_ben = size(g2_ben) ? sum(g2_ben.selectionCoeff) else 0.0;
+	S_hom_ben = 0.0;
+	if (size(g1_ben) & size(g2_ben))
+		S_hom_ben = sum(setIntersection(g1_ben, g2_ben).selectionCoeff);
+	
+	S_ben = H_BEN * (S_g1_ben + S_g2_ben) + (1 - 2*H_BEN) * S_hom_ben;
+	w_ben = (S_ben > 0) ? exp(S_ben) else 1.0;
+	
+	return w_del * w_ben;
+}
+
+// Each pair produces 8 offspring with random partners then dies
+// Discrete non-overlapping generations consistent with theoretical
+// framework underlying all parameter derivations
+reproduction() {
+	for (i in 1:4)
+		subpop.addCrossed(individual, subpop.sampleIndividuals(1));
+	individual.fitnessScaling = 0.0;  // kill parent after reproducing
+}
+
+1 early() {
+	sim.addSubpop("p1", 2);
+	log = community.createLogFile("C:/SLIM/human_scaled_3_v3_strong_epistasis_run_1.txt", logInterval=1);
+	log.addCycle();
+	log.addCustomColumn("Population_size", "p1.individualCount;");
+	log.addCustomColumn("Deleterious_muts", "sim.countOfMutationsOfType(m2);");
+	log.addCustomColumn("Beneficial_muts", "sim.countOfMutationsOfType(m3);");
+	log.addCustomColumn("Pct_del_destined_fix",
+		"m2freqs = sim.mutationFrequencies(p1, sim.mutationsOfType(m2)); " +
+		"size(m2freqs) > 0 ? mean(m2freqs) * 100 else 0.0;");
+}
+
+early() {
+	p1.fitnessScaling = K / p1.individualCount;
+}
+
+300 late() { sim.outputFull(); }

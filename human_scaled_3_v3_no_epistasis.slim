@@ -1,0 +1,62 @@
+// test of genetic entropy with STANDARD MULTIPLICATIVE FITNESS
+// Scaling factor 3 applied to Ne, mutation rate, recombination rate, and genome size
+// Selection coefficients taken directly from Racimo & Schraiber (2014) genome-wide
+// mean |s| of 6.9e-6, scaled by factor of 3:
+//   s_del = 6.9e-6 * 3 = 2.07e-5
+//   s_ben = 6.9e-6 * 3 = 2.07e-5
+// H_DEL = 0.4 — mildly recessive, consistent with weak-effect DFE literature
+// H_BEN = 0.6 — modestly dominant, within empirical range for beneficial mutations
+// EPS_DEL = 0.0 — MULTIPLICATIVE (standard SLiM approach, no synergistic epistasis)
+// EPS_BEN = 0.0 — multiplicative for beneficial mutations
+// Beneficial fraction 0.001 — more empirically defensible than 0.01
+// Discrete non-overlapping generations — parents die after reproducing
+// 4 offspring per individual before density dependent culling
+initialize() {
+	initializeSLiMModelType("nonWF");
+	defineConstant("K", 4115);           // Ne 10,000 / 3  --expected to reach pop ceiling of ~3333
+	defineConstant("H_DEL", 0.4);        // mildly recessive — consistent with weak-effect DFE
+	defineConstant("H_BEN", 0.6);        // modestly dominant — within empirical range
+	
+	initializeMutationType("m2", H_DEL, "g", -2.07e-5, 0.38); // Racimo & Schraiber × 3
+	m2.convertToSubstitution = F;
+	initializeMutationType("m3", H_BEN, "e", 2.07e-5);        // Racimo & Schraiber × 3
+	m3.convertToSubstitution = F;
+	
+	initializeGenomicElementType("g1", c(m2, m3), c(0.999, 0.001)); // Sanjuan et al
+	initializeGenomicElement(g1, 0, 999999999);   // 3 billion / 3 = 1 billion bp
+	initializeMutationRate(3.6e-8);               // 1.2e-8 × 3
+	initializeRecombinationRate(3.0e-8);          // 1.0e-8 × 3
+}
+
+// Standard SLiM fitness effects with dominance
+// Mutations m2 (deleterious) and m3 (beneficial) use SLiM's built-in dominance model
+// Fitness effects are multiplicative: w_total = w_m2 * w_m3
+// SLiM automatically applies dominance based on the h parameter in initializeMutationType()
+// NO custom mutationEffect() block — let SLiM handle it automatically
+
+// Each pair produces 4 offspring with random partners then dies
+// Discrete non-overlapping generations consistent with theoretical
+// framework underlying all parameter derivations
+reproduction() {
+	for (i in 1:4)
+		subpop.addCrossed(individual, subpop.sampleIndividuals(1));
+	individual.fitnessScaling = 0.0;  // kill parent after reproducing
+}
+
+1 early() {
+	sim.addSubpop("p1", 2);
+	log = community.createLogFile("C:/SLIM/human_scaled_3_v3_no_epistasis_run_1.txt", logInterval=1);
+	log.addCycle();
+	log.addCustomColumn("Population_size", "p1.individualCount;");
+	log.addCustomColumn("Deleterious_muts", "sim.countOfMutationsOfType(m2);");
+	log.addCustomColumn("Beneficial_muts", "sim.countOfMutationsOfType(m3);");
+	log.addCustomColumn("Pct_del_destined_fix",
+		"m2freqs = sim.mutationFrequencies(p1, sim.mutationsOfType(m2)); " +
+		"size(m2freqs) > 0 ? mean(m2freqs) * 100 else 0.0;");
+}
+
+early() {
+	p1.fitnessScaling = K / p1.individualCount;
+}
+
+300 late() { sim.outputFull(); }
