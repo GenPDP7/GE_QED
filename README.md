@@ -1,6 +1,10 @@
 # GE_QED
 Files for the Price-Hancock Debate of 2026 - in which Genetic Entropy is demonstrated.
 
+The main SLiM code file I used for the simulation I showed in the debate came from:
+
+human_scaled_3_v3.slim
+
 IMPORTANT NOTE:
 
 I now realize that the density-dependent fitness scaling of my simulation was acting to artificially slow down the process of genetic entropy. The following alteration to the code should work to mitigate this for future runs:
